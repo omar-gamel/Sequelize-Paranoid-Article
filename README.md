@@ -1,73 +1,122 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="200" alt="Nest Logo" /></a>
+# Paranoid
+
+Sequelize supports the concept of paranoid tables. A paranoid table is one that, when told to delete a record, it will not truly delete it. Instead, a special column called `deletedAt` will have its value set to the timestamp of that deletion request.<br>
+<br>
+This means that paranoid tables perform a soft-deletion of records, instead of a hard-deletion.
+
+# Defining a model as paranoid
+
+To make a model paranoid, you must pass the `paranoid: true` option to the model definition. Paranoid requires timestamps to work (i.e. it won't work if you also pass `timestamps: false`).<br>
+<br>
+You can also change the default column name (which is `deletedAt`) to something else.
+<p>
+
+```javascript
+class Post extends Model {}
+Post.init({ /* attributes here */ }, {
+  sequelize,
+  paranoid: true,
+
+  // If you want to give a custom name to the deletedAt column
+  deletedAt: 'destroyTime'
+});
+```
 </p>
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+# Deleting
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://coveralls.io/github/nestjs/nest?branch=master" target="_blank"><img src="https://coveralls.io/repos/github/nestjs/nest/badge.svg?branch=master#9" alt="Coverage" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow"></a>
+When you call the `destroy` method, a soft-deletion will happen:
+<p>
+
+```javascript
+await Post.destroy({
+  where: {
+    id: 1
+  }
+});
+// UPDATE "posts" SET "deletedAt"=[timestamp] WHERE "deletedAt" IS NULL AND "id" = 1
+```
 </p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
 
-## Description
+If you really want a hard-deletion and your model is paranoid, you can force it using the `force: true` option:
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+<p>
 
-## Installation
-
-```bash
-$ npm install
+```javascript
+await Post.destroy({
+  where: {
+    id: 1
+  },
+  force: true
+});
+// DELETE FROM "posts" WHERE "id" = 1
 ```
+</p>
 
-## Running the app
 
-```bash
-# development
-$ npm run start
+The above examples used the static `destroy` method as an example (`Post.destroy`), but everything works in the same way with the instance method:
 
-# watch mode
-$ npm run start:dev
+<p>
 
-# production mode
-$ npm run start:prod
+```javascript
+const post = await Post.create({ title: 'test' });
+console.log(post instanceof Post); // true
+await post.destroy(); // Would just set the `deletedAt` flag
+await post.destroy({ force: true }); // Would really delete the record
 ```
+</p>
 
-## Test
+# Restoring
 
-```bash
-# unit tests
-$ npm run test
+To restore soft-deleted records, you can use the `restore` method, which comes both in the static version as well as in the instance version:
 
-# e2e tests
-$ npm run test:e2e
+<p>
 
-# test coverage
-$ npm run test:cov
+```javascript
+// Example showing the instance `restore` method
+// We create a post, soft-delete it and then restore it back
+const post = await Post.create({ title: 'test' });
+console.log(post instanceof Post); // true
+await post.destroy();
+console.log('soft-deleted!');
+await post.restore();
+console.log('restored!');
+
+// Example showing the static `restore` method.
+// Restoring every soft-deleted post with more than 100 likes
+await Post.restore({
+  where: {
+    likes: {
+      [Op.gt]: 100
+    }
+  }
+});
 ```
+</p>
 
-## Support
+# Behavior with other queries
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+Every query performed by Sequelize will automatically ignore soft-deleted records (except raw queries, of course).<br>
+<br>
+This means that, for example, the `findAll` method will not see the soft-deleted records, fetching only the ones that were not deleted.<br>
+<br>
+Even if you simply call `findByPk` providing the primary key of a soft-deleted record, the result will be `null` as if that record didn't exist.<br>
+<br>
+If you really want to let the query see the soft-deleted records, you can pass the `paranoid: false` option to the query method. For example:<br>
 
-## Stay in touch
+<p>
 
-- Author - [Kamil Myśliwiec](https://kamilmysliwiec.com)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+```javascript
+await Post.findByPk(123); // This will return `null` if the record of id 123 is soft-deleted
+await Post.findByPk(123, { paranoid: false }); // This will retrieve the record
 
-## License
+await Post.findAll({
+  where: { foo: 'bar' }
+}); // This will not retrieve soft-deleted records
 
-Nest is [MIT licensed](LICENSE).
+await Post.findAll({
+  where: { foo: 'bar' },
+  paranoid: false
+}); // This will also retrieve soft-deleted records
+```
+</p>
